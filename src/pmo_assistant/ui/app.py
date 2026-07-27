@@ -6,6 +6,8 @@ Rodar: uv run streamlit run src/pmo_assistant/ui/app.py
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
@@ -46,6 +48,7 @@ from pmo_assistant.infra.db import (  # noqa: E402
 )
 from pmo_assistant.infra.docs import DocumentoIlegivelError, ler_documento  # noqa: E402
 from pmo_assistant.infra.llm import LLMClient  # noqa: E402
+from pmo_assistant.infra.relatorio_pptx import gerar_status_report_pptx  # noqa: E402
 from pmo_assistant.infra.repositorio import (  # noqa: E402
     listar_acoes_por_projeto,
     listar_projetos,
@@ -250,6 +253,13 @@ def _salvar_tmp(arquivo) -> Path:
     with NamedTemporaryFile(delete=False, suffix=Path(arquivo.name).suffix) as tmp:
         tmp.write(arquivo.read())
         return Path(tmp.name)
+
+
+def _slug(texto: str) -> str:
+    """Nome de projeto com acentos/espaços/parênteses vira nome de arquivo seguro."""
+    texto = texto.lower().strip()
+    texto = re.sub(r"\s+", "_", texto)
+    return re.sub(r"[^a-z0-9_]", "", texto)
 
 
 def _acao_orm_para_pydantic(acao_orm: AcaoORM) -> AcaoExtraida:
@@ -605,6 +615,27 @@ with aba_crono:
             )
         else:
             st.success("Nenhuma tarefa atrasada detectada.")
+
+        st.divider()
+        st.subheader("Status Report para o Cliente")
+        if st.button("Gerar Status Report (PPTX)", type="primary"):
+            with st.spinner("Gerando apresentação..."):
+                with session_factory() as sess:
+                    projeto_atual = next(
+                        (p for p in listar_projetos(sess) if p.id == projeto_id_selecionado),
+                        None,
+                    )
+                cliente = projeto_atual.cliente if projeto_atual else None
+                pptx_bytes = gerar_status_report_pptx(cr, cliente, date.today())
+            st.download_button(
+                "Baixar apresentação",
+                data=pptx_bytes,
+                file_name=f"status_report_{_slug(cr.nome_projeto)}.pptx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument"
+                    ".presentationml.presentation"
+                ),
+            )
     else:
         st.info(
             "Nenhum cronograma carregado. Envie um PDF de cronograma acima para "
