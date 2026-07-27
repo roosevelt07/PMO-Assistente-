@@ -11,6 +11,8 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
 import streamlit as st
+from alembic import command as alembic_command
+from alembic.config import Config
 from dotenv import load_dotenv
 from loguru import logger
 from sqlalchemy import select
@@ -207,6 +209,21 @@ def _engine() -> Engine:
     eng = criar_engine()
     inicializar_schema(eng)
     return eng
+
+
+@st.cache_resource
+def _rodar_migrations() -> None:
+    """Roda as migrations Alembic no boot — Streamlit Cloud sobe com banco vazio,
+    sem isso a tabela virtual documentos_fts nunca existe (não é criada por
+    inicializar_schema/metadata, só via migration).
+
+    @st.cache_resource garante que roda uma vez por processo, não a cada rerun.
+    """
+    cfg = Config("alembic.ini")
+    alembic_command.upgrade(cfg, "head")
+
+
+_rodar_migrations()
 
 
 @st.cache_resource
