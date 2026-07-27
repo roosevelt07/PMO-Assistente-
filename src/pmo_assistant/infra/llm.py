@@ -8,18 +8,36 @@ from __future__ import annotations
 import os
 import random
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 from anthropic.types import ToolUseBlock
 from loguru import logger
-from pydantic import BaseModel
 
 from pmo_assistant.infra.cache import CacheLLM
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 MODELO_PADRAO = "claude-sonnet-4-6"
 MAX_TOKENS = 4096
 MAX_TENTATIVAS = 4
+
+
+def _get_api_key() -> str:
+    """Streamlit Cloud injeta via st.secrets; local usa .env."""
+    try:
+        import streamlit as st  # noqa: PLC0415 — evita import circular fora de contexto Streamlit
+
+        return st.secrets["ANTHROPIC_API_KEY"]
+    except Exception:
+        key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY não configurada. "
+                "Defina em .env (local) ou Secrets (Streamlit Cloud)."
+            ) from None
+        return key
 
 
 class LLMClient:
@@ -31,9 +49,7 @@ class LLMClient:
         modelo: str = MODELO_PADRAO,
         cache: CacheLLM | None = None,
     ) -> None:
-        key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        if not key:
-            raise RuntimeError("ANTHROPIC_API_KEY não definido — configure .env")
+        key = api_key or _get_api_key()
         self._client = anthropic.Anthropic(api_key=key)
         self._modelo = modelo
         self._cache = cache or CacheLLM()
