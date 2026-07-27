@@ -7,11 +7,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from docx import Document as DocxDocument
 from loguru import logger
 from pypdf import PdfReader
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 LIMIAR_PDF_ESCANEADO = 50
 

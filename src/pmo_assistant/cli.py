@@ -7,13 +7,16 @@ uv run python -m pmo_assistant.cli limpar-cache
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from loguru import logger
 
 from pmo_assistant.infra.cache import DEFAULT_DIR as CACHE_DIR
 from pmo_assistant.infra.db import criar_engine, inicializar_schema
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 app = typer.Typer(help="PMO Assistant — utilitários")
 
