@@ -16,6 +16,7 @@ dependencies = [
     "loguru>=0.7.2",
     "typer>=0.13.0",
     "python-dotenv>=1.0.1",
+    "python-pptx>=1.0.0",
 ]
 
 [dependency-groups]
