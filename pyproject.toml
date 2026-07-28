@@ -17,6 +17,7 @@ dependencies = [
     "typer>=0.13.0",
     "python-dotenv>=1.0.1",
     "python-pptx>=1.0.0",
+    "plotly>=5.0.0",
 ]
 
 [dependency-groups]
