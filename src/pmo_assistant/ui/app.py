@@ -7,11 +7,12 @@ Rodar: uv run streamlit run src/pmo_assistant/ui/app.py
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
+import plotly.graph_objects as go
 import streamlit as st
 from alembic import command as alembic_command
 from alembic.config import Config
@@ -36,6 +37,13 @@ from pmo_assistant.core.models import (  # noqa: E402
     TipoDocumento,
 )
 from pmo_assistant.core.parsers.cronograma import parsear_cronograma  # noqa: E402
+from pmo_assistant.core.relatorio import (  # noqa: E402
+    atividades_realizadas,
+    classificar_tarefas_por_status,
+    pontos_de_atencao,
+    proximas_atividades,
+    texto_cronograma_para_fts,
+)
 from pmo_assistant.core.saude import avaliar_saude  # noqa: E402
 from pmo_assistant.infra.busca import buscar, reindexar_documento  # noqa: E402
 from pmo_assistant.infra.db import (  # noqa: E402
@@ -506,9 +514,30 @@ with aba_crono:
                 conteudo, projeto_id=projeto_id_selecionado or 0, nome_projeto=nome_proj
             )
             st.session_state.cronograma = cr
-            if projeto_id_selecionado is not None:
+            if not cr.tarefas:
+                st.warning(
+                    "Nenhuma tarefa foi extraída do cronograma. "
+                    "Verifique se o PDF está no formato MS Project ou Dashboard Executivo. "
+                    "Tente exportar novamente com todas as colunas visíveis."
+                )
+            elif projeto_id_selecionado is not None:
                 with session_factory() as sess:
                     salvar_cronograma(sess, projeto_id_selecionado, cr.tarefas)
+                    documento_crono = salvar_documento_com_acoes(
+                        sess,
+                        projeto_id_selecionado,
+                        crono_file.name,
+                        TipoDocumento.CRONOGRAMA,
+                        resumo=f"Cronograma: {cr.nome_projeto}",
+                        acoes=[],
+                        conteudo_bruto=conteudo,
+                    )
+                reindexar_documento(
+                    _engine(),
+                    documento_crono.id,
+                    projeto_id_selecionado,
+                    texto_cronograma_para_fts(cr),
+                )
             else:
                 st.warning(
                     "Selecione ou crie um projeto na barra lateral para salvar o cronograma."
@@ -577,44 +606,98 @@ with aba_crono:
 
         st.info(saude.justificativa)
 
-        tarefas_reais = [t for t in cr.tarefas if not t.eh_resumo]
-        contagem = {"Concluídas": 0, "No Prazo": 0, "Atrasadas": 0, "Futuras": 0}
-        for t in tarefas_reais:
-            if t.atrasada:
-                contagem["Atrasadas"] += 1
-            elif t.percentual_concluido >= PCT_COMPLETO:
-                contagem["Concluídas"] += 1
-            elif t.percentual_concluido > 0:
-                contagem["No Prazo"] += 1
-            else:
-                contagem["Futuras"] += 1
+        contagem = classificar_tarefas_por_status(cr.tarefas)
+        folhas = [t for t in cr.tarefas if not t.eh_resumo]
+        tarefas_futuras = [
+            t for t in folhas
+            if t.inicio_real is None and not t.atrasada and t.percentual_concluido < PCT_COMPLETO
+        ]
 
         st.subheader("Tarefas por status")
-        st.bar_chart(
-            {k: [v] for k, v in contagem.items()},
-            color=[VERDE_CLARO, AZUL, VERMELHO, CINZA_CLARO],
+        cores_status = {
+            "Concluída": VERDE_CLARO,
+            "No Prazo": AZUL,
+            "Atrasada": VERMELHO,
+            "Tarefa Futura": CINZA_CLARO,
+        }
+        labels_pizza = list(contagem.keys())
+        fig_pizza = go.Figure(
+            data=[
+                go.Pie(
+                    labels=labels_pizza,
+                    values=list(contagem.values()),
+                    marker_colors=[cores_status[label] for label in labels_pizza],
+                    hole=0.4,
+                    textinfo="label+percent",
+                )
+            ]
         )
+        fig_pizza.update_layout(
+            margin={"t": 0, "b": 0, "l": 0, "r": 0},
+            height=320,
+            showlegend=True,
+            legend={"orientation": "h", "y": -0.1},
+        )
+        st.plotly_chart(fig_pizza, use_container_width=True)
 
-        st.subheader("Tarefas atrasadas")
-        atrasadas = [t for t in tarefas_reais if t.atrasada]
-        if atrasadas:
-            st.dataframe(
-                [
-                    {
-                        "ID": t.id_tarefa, "Tarefa": t.nome,
-                        "Concluído": f"{t.percentual_concluido:.0f}%",
-                        "Esperado": (
-                            f"{t.percentual_esperado:.0f}%" if t.percentual_esperado else "—"
-                        ),
-                        "Término": t.termino.isoformat() if t.termino else "—",
-                        "Baseline": t.termino_baseline.isoformat() if t.termino_baseline else "—",
-                    }
-                    for t in atrasadas
-                ],
-                use_container_width=True, hide_index=True,
-            )
-        else:
-            st.success("Nenhuma tarefa atrasada detectada.")
+        def _fmt_data(d: date | None) -> str:
+            return d.strftime("%d/%m/%Y") if d else "—"
+
+        def _tabela_tarefas(
+            tarefas: list[TarefaCronograma], colunas_datas: list[tuple[str, str]]
+        ) -> list[dict[str, str]]:
+            rows = []
+            for t in tarefas:
+                row = {"Tarefa": t.nome[:80], "% Concluído": f"{t.percentual_concluido:.0f}%"}
+                for label, campo in colunas_datas:
+                    row[label] = _fmt_data(getattr(t, campo, None))
+                rows.append(row)
+            return rows
+
+        with st.expander(f"✅ Concluídas ({contagem['Concluída']})", expanded=False):
+            realizadas = atividades_realizadas(cr.tarefas)
+            if realizadas:
+                colunas = [("Prevista", "termino_baseline"), ("Concluída em", "termino_real")]
+                st.dataframe(
+                    _tabela_tarefas(realizadas, colunas),
+                    use_container_width=True, hide_index=True,
+                )
+            else:
+                st.info("Nenhuma atividade concluída.")
+
+        with st.expander(f"🟢 No Prazo ({contagem['No Prazo']})", expanded=False):
+            no_prazo = proximas_atividades(cr.tarefas)
+            if no_prazo:
+                st.dataframe(
+                    _tabela_tarefas(
+                        no_prazo, [("Prevista", "termino_baseline"), ("Nova Previsão", "termino")]
+                    ),
+                    use_container_width=True, hide_index=True,
+                )
+            else:
+                st.info("Nenhuma atividade em andamento no prazo.")
+
+        with st.expander(f"🔴 Atrasadas ({contagem['Atrasada']})", expanded=True):
+            atrasadas = pontos_de_atencao(cr.tarefas)
+            if atrasadas:
+                st.dataframe(
+                    _tabela_tarefas(
+                        atrasadas, [("Prevista", "termino_baseline"), ("Atual", "termino")]
+                    ),
+                    use_container_width=True, hide_index=True,
+                )
+            else:
+                st.success("Nenhuma tarefa atrasada detectada.")
+
+        with st.expander(f"⏳ Atividades Futuras ({contagem['Tarefa Futura']})", expanded=False):
+            if tarefas_futuras:
+                colunas = [("Início Previsto", "inicio"), ("Conclusão Prevista", "termino")]
+                st.dataframe(
+                    _tabela_tarefas(tarefas_futuras, colunas),
+                    use_container_width=True, hide_index=True,
+                )
+            else:
+                st.info("Nenhuma atividade futura identificada.")
 
         st.divider()
         st.subheader("Status Report para o Cliente")

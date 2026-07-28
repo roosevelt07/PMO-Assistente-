@@ -63,3 +63,44 @@ def proximas_atividades(tarefas: list[TarefaCronograma]) -> list[TarefaCronogram
 
 def pontos_de_atencao(tarefas: list[TarefaCronograma]) -> list[TarefaCronograma]:
     return [t for t in tarefas if not t.eh_resumo and t.atrasada]
+
+
+def texto_cronograma_para_fts(cr: Cronograma) -> str:
+    """Serializa o cronograma como texto pesquisável pelo FTS5 (infra/busca.py).
+
+    Sem isso, o chat (objetivo 3) nunca vê dados de cronograma — só de atas.
+    Preserva termos que o usuário usará em perguntas ("atrasada", "concluída",
+    datas em pt-BR). Linhas-resumo (eh_resumo=True) são excluídas: são agregados
+    de fase, não atividades que o usuário pergunta por nome.
+    """
+    linhas = [f"Cronograma do projeto: {cr.nome_projeto}"]
+    if cr.data_referencia:
+        linhas.append(f"Data de referência: {cr.data_referencia.strftime('%d/%m/%Y')}")
+
+    for t in cr.tarefas:
+        if t.eh_resumo:
+            continue
+        if t.percentual_concluido >= _PCT_COMPLETO:
+            status = "concluída"
+        elif t.atrasada:
+            status = "atrasada"
+        elif t.inicio_real is None:
+            status = "futura"
+        else:
+            status = "em andamento"
+
+        partes = [
+            f"Atividade: {t.nome}. Status: {status}.",
+            f"Percentual concluído: {t.percentual_concluido:.0f}%.",
+        ]
+        if t.termino_baseline:
+            partes.append(f"Previsão original: {t.termino_baseline.strftime('%d/%m/%Y')}.")
+        if t.inicio:
+            partes.append(f"Início previsto: {t.inicio.strftime('%d/%m/%Y')}.")
+        if t.termino:
+            partes.append(f"Término previsto: {t.termino.strftime('%d/%m/%Y')}.")
+        if t.termino_real:
+            partes.append(f"Concluída em: {t.termino_real.strftime('%d/%m/%Y')}.")
+        linhas.append(" ".join(partes))
+
+    return "\n".join(linhas)
