@@ -758,14 +758,40 @@ with aba_chat:
                         {"role": "assistant", "content": resposta_texto, "fontes": []}
                     )
                 else:
-                    partes_contexto = [f"Projeto: {projeto_nome_selecionado}"]
-                    if st.session_state.cronograma:
+                    hoje = date.today()
+                    partes_contexto = [
+                        f"Projeto: {projeto_nome_selecionado}",
+                        f"Data de hoje: {hoje.strftime('%d/%m/%Y')}",
+                    ]
+                    cr_atual = st.session_state.cronograma
+                    if cr_atual:
                         saude_atual = avaliar_saude(
-                            st.session_state.cronograma,
+                            cr_atual,
                             [a.status for _, a in st.session_state.acoes],
                         )
                         partes_contexto.append(saude_atual.justificativa)
-                    contexto_projeto = " | ".join(partes_contexto)
+
+                        contagem_ctx = classificar_tarefas_por_status(cr_atual.tarefas)
+                        partes_contexto.append(f"Status do cronograma: {contagem_ctx}")
+
+                        limite = hoje + timedelta(weeks=4)
+                        proximas = [
+                            t
+                            for t in cr_atual.tarefas
+                            if not t.eh_resumo
+                            and t.termino is not None
+                            and hoje <= t.termino <= limite
+                            and t.percentual_concluido < PCT_COMPLETO
+                        ]
+                        if proximas:
+                            partes_contexto.append("Atividades nos próximos 30 dias:")
+                            for t in proximas[:10]:  # limite conservador de contexto
+                                partes_contexto.append(
+                                    f"- {t.nome}: prevista para {t.termino.strftime('%d/%m/%Y')}, "
+                                    f"{t.percentual_concluido:.0f}% concluída"
+                                    f"{', ATRASADA' if t.atrasada else ''}"
+                                )
+                    contexto_projeto = "\n".join(partes_contexto)
 
                     with st.spinner("Consultando documentos..."):
                         resposta = responder_pergunta(pergunta, trechos, contexto_projeto, _llm())
