@@ -11,6 +11,7 @@ from pmo_assistant.core.relatorio import (
     pontos_de_atencao,
     proximas_atividades,
     tarefa_raiz,
+    texto_cronograma_para_fts,
 )
 
 
@@ -125,3 +126,53 @@ def test_pontos_de_atencao_filtra_atrasadas():
 
 def test_pontos_de_atencao_lista_vazia():
     assert pontos_de_atencao([]) == []
+
+
+def test_texto_cronograma_para_fts_contem_nomes():
+    cr = Cronograma(
+        projeto_id=1,
+        nome_projeto="Tripla",
+        tarefas=[
+            TarefaCronograma(
+                id_tarefa=2, nome="Instalar equipamento de campo", percentual_concluido=40.0
+            ),
+        ],
+    )
+    texto = texto_cronograma_para_fts(cr)
+    assert "Instalar equipamento de campo" in texto
+    assert "Tripla" in texto
+
+
+def test_texto_cronograma_para_fts_contem_datas():
+    cr = Cronograma(
+        projeto_id=1,
+        nome_projeto="Tripla",
+        tarefas=[
+            TarefaCronograma(
+                id_tarefa=2,
+                nome="Homologar sistema",
+                percentual_concluido=0.0,
+                inicio=date(2026, 3, 10),
+                termino=date(2026, 7, 18),
+            ),
+        ],
+    )
+    texto = texto_cronograma_para_fts(cr)
+    assert "10/03/2026" in texto
+    assert "18/07/2026" in texto
+
+
+def test_texto_cronograma_para_fts_exclui_resumos():
+    cr = Cronograma(
+        projeto_id=1,
+        nome_projeto="Tripla",
+        tarefas=[
+            TarefaCronograma(
+                id_tarefa=1, nome="Resumo do projeto", percentual_concluido=73.0, eh_resumo=True
+            ),
+            TarefaCronograma(id_tarefa=2, nome="Atividade real", percentual_concluido=50.0),
+        ],
+    )
+    texto = texto_cronograma_para_fts(cr)
+    assert "Atividade real" in texto
+    assert "Resumo do projeto" not in texto

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
-from pmo_assistant.core.parsers.cronograma import parsear_cronograma
+from pmo_assistant.core.parsers.cronograma import detectar_layout, parsear_cronograma
 
 # Trecho real do layout Charqueadas (com baseline e % esperado)
 CHARQUEADAS = """\
@@ -59,3 +59,74 @@ def test_parser_ignora_paginas_gantt():
     gantt = "N D J F MAM J J A S ON\nSemestre 2 2026 Semestre 1 2027\n"
     cr = parsear_cronograma(gantt, projeto_id=3, nome_projeto="X")
     assert len(cr.tarefas) == 0
+
+
+# Layout B — Dashboard Executivo (Tripla, Usina Santo Antônio): sem baseline,
+# IDs decimais (1.1, 2.1), status literal em vez de %.
+DASHBOARD_MINIMO = """\
+Dashboard Executivo — Projeto Tripla
+ID Resp. Início Prev. Conclusão Prev. Status % Execução
+1.1 João Elaborar diagrama de arquitetura 01/01/26 10/03/26 Concluído 100%
+1.2 Maria Instalar equipamento de campo 05/02/26 20/09/26 Em Andamento 40%
+Resumo
+Concluído 30 73%
+Total Geral 41 100%
+A Iniciar 11
+"""
+
+
+def test_detectar_layout_ms_project():
+    assert detectar_layout(CHARQUEADAS) == "ms_project"
+
+
+def test_detectar_layout_dashboard():
+    assert detectar_layout(DASHBOARD_MINIMO) == "dashboard_executivo"
+
+
+def test_detectar_layout_desconhecido():
+    assert detectar_layout("texto qualquer sem relação com cronograma") == "desconhecido"
+
+
+def test_parsear_cronograma_vazio_avisa():
+    # layout desconhecido cai no fallback MS Project, que não acha nada -> vazio, sem exceção
+    cr = parsear_cronograma("texto qualquer sem relação", projeto_id=4, nome_projeto="Y")
+    assert cr.tarefas == []
+
+
+def test_parsear_dashboard_executivo_basico():
+    cr = parsear_cronograma(DASHBOARD_MINIMO, projeto_id=5, nome_projeto="Tripla")
+    assert len(cr.tarefas) == 3  # 1 resumo sintético + 2 tarefas reais
+
+    raiz = next(t for t in cr.tarefas if t.id_tarefa == 1)
+    assert raiz.eh_resumo
+    assert raiz.percentual_concluido == 73.0
+    assert raiz.percentual_esperado is None
+    assert cr.percentual_geral == 73.0
+
+    t1 = next(t for t in cr.tarefas if "diagrama de arquitetura" in t.nome)
+    assert t1.percentual_concluido == 100.0
+    assert t1.percentual_esperado is None
+    assert t1.inicio == date(2026, 1, 1)
+    assert t1.termino == date(2026, 3, 10)
+    assert not t1.eh_resumo
+
+    t2 = next(t for t in cr.tarefas if "equipamento de campo" in t.nome)
+    assert t2.percentual_concluido == 50.0  # "Em Andamento" -> 50%
+    assert t2.inicio_real == date(2026, 2, 5)
+    assert t2.termino_real is None  # ainda não concluída
+
+
+def test_parsear_dashboard_executivo_marca_atrasada():
+    ontem = (date.today() - timedelta(days=1)).strftime("%d/%m/%y")
+    texto = f"""\
+ID Resp. Início Prev. Conclusão Prev. Status % Execução
+2.1 Pedro Homologar sistema de proteção 01/01/26 {ontem} A Iniciar 0%
+Concluído 0 0%
+Total Geral 1 0%
+A Iniciar 1
+"""
+    cr = parsear_cronograma(texto, projeto_id=6, nome_projeto="Z")
+    tarefa = next(t for t in cr.tarefas if not t.eh_resumo)
+    assert tarefa.termino is not None and tarefa.termino < date.today()
+    assert tarefa.percentual_concluido < 100.0
+    assert tarefa.atrasada

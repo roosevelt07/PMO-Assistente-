@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pmo_assistant.core.chat import responder_pergunta
+from pmo_assistant.core.prompts.chat import PROMPT_VERSAO, SYSTEM_PROMPT
 from tests.conftest import FakeLLMClient
 
 TRECHOS = [
@@ -42,3 +43,11 @@ def test_responder_pergunta_inclui_trechos_no_prompt() -> None:
     user_prompt = llm.chamadas[0]["user"]
     assert "NETCON" in user_prompt
     assert "transformadores" in user_prompt
+
+
+def test_prompt_versao_e_consciencia_de_datas() -> None:
+    # v1.1: contexto_projeto vira fonte secundária válida (não só <trechos>),
+    # e o prompt instrui o cálculo de datas relativas a partir de "data de hoje".
+    assert PROMPT_VERSAO == "v1.1"
+    assert "contexto_projeto" in SYSTEM_PROMPT
+    assert "data de hoje" in SYSTEM_PROMPT.lower()
